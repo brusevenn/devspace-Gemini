@@ -26,6 +26,15 @@ const HOST_SIGNATURES: readonly HostSignature[] = [
     userAgent: /openai|chatgpt/i,
   },
   {
+    // Gemini CLI uses the general MCP tool surface: write, edit, and bash.
+    // Its OAuth callback is a loopback URL, so the registered client name or
+    // User-Agent is the reliable signal (rather than a public redirect domain).
+    surface: "claude",
+    clientName: /gemini/i,
+    redirectDomains: [],
+    userAgent: /gemini/i,
+  },
+  {
     surface: "claude",
     clientName: /claude|anthropic/i,
     redirectDomains: ["claude.ai", "claude.com", "anthropic.com"],

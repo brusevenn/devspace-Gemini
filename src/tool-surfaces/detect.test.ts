@@ -22,6 +22,26 @@ test("a Claude OAuth client selects the claude surface", () => {
   );
 });
 
+test("a Gemini CLI OAuth client selects the general claude-compatible surface", () => {
+  assert.equal(
+    detectToolSurface({
+      clientName: "Gemini CLI",
+      redirectUris: ["http://localhost:49152/oauth/callback"],
+    }),
+    "claude",
+  );
+});
+
+test("the Gemini CLI User-Agent identifies a generic OAuth client", () => {
+  assert.equal(
+    detectToolSurface({
+      clientName: "MCP",
+      userAgent: "Gemini CLI/0.30.0",
+    }),
+    "claude",
+  );
+});
+
 test("the client name decides without a recognisable redirect host", () => {
   assert.equal(
     detectToolSurface({ clientName: "Claude", redirectUris: ["http://127.0.0.1/callback"] }),
