@@ -10,10 +10,12 @@ it can open a workspace, read and patch files, run tests and builds, and show
 you a review card of what changed. With subagents enabled, the same host can
 delegate to Codex, Claude Code, and the rest.
 
-ChatGPT and Claude connect through their custom connector settings. Grok Bot,
-OpenClaw, and Hermes work when your setup can add a remote MCP server with
-OAuth. Muse applies only to environments that expose MCP configuration;
-consumer Muse currently documents connectors through APIs and CLIs.
+ChatGPT and Claude connect through their custom connector settings. Gemini CLI
+connects as a remote Streamable HTTP MCP client and supports OAuth discovery
+and dynamic client registration. Grok Bot, OpenClaw, and Hermes work when your
+setup can add a remote MCP server with OAuth. Muse applies only to environments
+that expose MCP configuration; consumer Muse currently documents connectors
+through APIs and CLIs.
 
 ## Connect
 
@@ -63,6 +65,49 @@ consumer Muse currently documents connectors through APIs and CLIs.
 Protocol compatibility is automatic: the same `/mcp` endpoint serves the
 2026-07-28 per-request protocol and older 2025-era clients statelessly.
 
+## Connect Gemini CLI
+
+Gemini CLI supports remote Streamable HTTP MCP servers and OAuth discovery.
+Run this command on the machine where Gemini CLI and its browser are available:
+
+```bash
+gemini mcp add --transport http --scope user devspace https://your-tunnel.example.com/mcp
+gemini mcp list
+```
+
+Start Gemini CLI and authenticate when prompted. You can also start or repeat
+the flow with:
+
+```text
+/mcp auth devspace
+```
+
+Approve the request on the DevSpace page with your local Owner password.
+Gemini CLI normally uses a loopback callback such as
+`http://localhost:<random-port>/oauth/callback`. DevSpace's default
+`oauth.allowedRedirectHosts` already includes `localhost` and `127.0.0.1`.
+If you override that list, retain both hosts. OAuth requires a local browser
+and a reachable loopback callback; headless environments without browser
+access are not supported by this flow.
+
+The equivalent entry in Gemini CLI's `~/.gemini/settings.json` is:
+
+```json
+{
+  "mcpServers": {
+    "devspace": {
+      "httpUrl": "https://your-tunnel.example.com/mcp",
+      "timeout": 600000
+    }
+  }
+}
+```
+
+This fork recognizes Gemini CLI OAuth client names and User-Agent strings and
+maps Gemini CLI to DevSpace's general MCP surface (`write`, `edit`, and
+`bash`). It does not expose the Codex-specific `apply_patch` and
+`exec_command` surface to Gemini CLI.
+
 ## A session
 
 1. Ask the host to open a project inside one of your allowed roots.
@@ -72,8 +117,9 @@ Protocol compatibility is automatic: the same `/mcp` endpoint serves the
 4. After the last file change in a turn, it calls `show_changes` once to render
    a review card of the combined diff.
 
-ChatGPT gets Codex-style tools (`apply_patch`, `exec_command`); Claude and other
-hosts get Claude-style tools (`write`, `edit`, `bash`). See
+ChatGPT gets Codex-style tools (`apply_patch`, `exec_command`); Claude,
+Gemini CLI, and other unrecognized hosts get the general tools (`write`,
+`edit`, `bash`). See
 [Tool surfaces](/connect/tool-surfaces) for the exact tools.
 
 ## Activity history
