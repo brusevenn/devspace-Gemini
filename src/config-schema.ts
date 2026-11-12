@@ -81,6 +81,9 @@ const oauthConfigSchema = z.object({
     "claude.com",
     "localhost",
     "127.0.0.1",
+    "oauth-redirect.googleusercontent.com",
+    "oauth-redirect-sandbox.googleusercontent.com",
+    "oauth-redirect-test.googleusercontent.com",
   ]),
 }).strict().prefault({});
 

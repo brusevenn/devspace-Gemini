@@ -1,0 +1,9 @@
+{
+  "projects": [
+    {
+      "name": "example-project",
+      "host": "your-existing-ssh-alias",
+      "root": "/home/your-user/your-project"
+    }
+  ]
+}

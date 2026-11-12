@@ -1,16 +1,37 @@
-# DevSpace — Gemini CLI fork
+# DevSpace — Gemini Web / CLI + Native Remote SSH
 
 [简体中文](#简体中文) | [English](#english)
 
-A Gemini CLI-ready fork of [DevSpace](https://github.com/Waishnav/devspace), the local coding-workspace MCP server. It lets Gemini CLI securely access selected folders on your computer through a remote Streamable HTTP MCP endpoint, and lets the host use DevSpace's workspace tools.
+A fork of [DevSpace](https://github.com/Waishnav/devspace) supporting the **Gemini web app** (custom MCP connector), Gemini CLI, and optional **native Remote SSH workspaces without SSHFS**. Existing ChatGPT MCP tool surfaces remain available.
 
-> **Scope:** This fork targets **Gemini CLI** and its MCP integration. It is not an integration for the consumer Gemini web or mobile app. The Gemini CLI uses a loopback OAuth callback and a browser on the same machine where the CLI is running.
+> **Scope:** Gemini Web connects through Settings / Connected Apps / Custom MCP server (availability depends on your Google account); Gemini CLI connects via its MCP settings. Native Remote SSH requires this fork to be running on the computer that already has SSH key access to your remote host. This repo does not contain anyone's SSH keys, OAuth tokens, or private server addresses.
 
 **Upstream:** [Waishnav/devspace](https://github.com/Waishnav/devspace) · **License:** MIT
 
 ---
 
 ## English
+
+### Gemini Web + Remote SSH quickstart
+
+1. Build this fork using the steps below. Keep your existing HTTPS tunnel and DevSpace OAuth database; **do not replace or reset them**. Test on a separate local port before switching a live server.
+2. Create `~/.devspace/remote-ssh.json` on the computer hosting DevSpace, based on [examples/remote-ssh.example.json](examples/remote-ssh.example.json). Choose an existing SSH alias and an exact project directory. No passwords or private keys belong in this file. Restart DevSpace after changing it.
+3. In [Gemini web](https://gemini.google.com/), open **Settings → Connected Apps → Add custom app / MCP server** (or [Developer Mode](https://gemini.google.com/devmode)), and use your current public `https://YOUR-TUNNEL-HOST/mcp`. Use dynamic OAuth client registration; leave client ID and client secret blank. Authorize through DevSpace's own Owner password screen.
+4. The fork allows Google's OAuth callback domains by default. If your existing config contains a custom `oauth.allowedRedirectHosts`, merge in `oauth-redirect.googleusercontent.com` as well as the sandbox/test counterparts, **keeping** the existing ChatGPT domains.
+5. Ask Gemini to call **remote_ssh_open** with the approved project name. It returns an `rss_...` ID; use **remote_ssh_read**, **remote_ssh_edit**, **remote_ssh_write**, **remote_ssh_exec**, and **remote_ssh_status** with that ID. Never call local `open_workspace("~")` for a remote project. These tools use native SSH with keys and do not mount or copy the repository.
+
+An example Gemini Web prompt:
+
+```text
+@DevSpace Use remote_ssh_open(name="example-project").
+Then call remote_ssh_status with the returned workspace_id and
+remote_ssh_read(path="README.md"). Do not change files yet.
+Do not use SSHFS, local open_workspace("~"), or password authentication.
+```
+
+**Performance:** Remote SSH tools open the configured remote project directly, avoiding a recursive scan of the Windows home directory. Use one remote_ssh_exec call to batch related read-only commands rather than many separate SSH invocations. The public tunnel and Gemini service may still add network and model latency; benchmarks must separate those layers.
+
+See [Native Remote SSH guide](docs/remote-ssh.md) for configuration, safety, Windows notes, and troubleshooting.
 
 ### 1. Requirements
 
@@ -153,6 +174,27 @@ For the full upstream architecture, configuration reference, and security model,
 ---
 
 ## 简体中文
+
+### Gemini 网页版 + 原生 SSH 快速配置
+
+1. 按下文步骤构建本 Fork。复用现有 HTTPS 隧道和 DevSpace OAuth 数据库，**不要覆盖、重置 ChatGPT 的授权**。上线前建议先在独立本机端口测试。
+2. 在运行 DevSpace 的本机创建 `~/.devspace/remote-ssh.json`，参考 [示例配置](examples/remote-ssh.example.json)，仅填写已有 SSH 别名和明确允许的远程项目路径。不要存放密码或私钥；配置更新后重启服务。
+3. 在 [Gemini 网页版](https://gemini.google.com/) 的**设置 → 已连接的应用 → 添加自定义 MCP 服务**（或[开发者模式](https://gemini.google.com/devmode)）输入原有的 `https://YOUR-TUNNEL-HOST/mcp`，使用 OAuth 动态客户端注册，客户端 ID / 密钥留空，在 DevSpace 授权页面输入 Owner password。
+4. 本 Fork 默认允许 Google 的 OAuth 回调域名。如果你的本机 `oauth.allowedRedirectHosts` 已经手工配置，请在**保留 ChatGPT 现有域名**的前提下合并 Google 的正式、sandbox 和 test 回调域名。
+5. 在 Gemini 中调用 **remote_ssh_open**，使用配置的项目名称。它返回 `rss_...` 工作区 ID。随后使用 **remote_ssh_read**、**remote_ssh_edit**、**remote_ssh_write**、**remote_ssh_exec**、**remote_ssh_status**。全程使用本机 SSH 公钥认证，不使用 SSHFS，也不复制远程仓库。
+
+可以直接对 Gemini 说：
+
+```text
+@DevSpace 请调用 remote_ssh_open(name="example-project")，
+使用返回的 workspace_id 调用 remote_ssh_status，
+再用 remote_ssh_read(path="README.md") 读取文件。
+目前只读，不要修改文件；不要打开本地 ~ 目录，也不要使用 SSHFS。
+```
+
+**性能说明：** 新版远程工具直接访问明确配置的远程项目，避免把整个 Windows 用户主目录当成工作区进行递归扫描。多个只读步骤可以合并在一次 remote_ssh_exec 中执行，减少 SSH 建连。Gemini 模型生成及公网网络延迟仍需单独测量。
+
+详细操作、安全配置和故障排查参见[原生 Remote SSH 指南](docs/remote-ssh.md)。
 
 ### 1. 环境要求
 
