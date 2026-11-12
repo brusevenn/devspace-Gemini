@@ -46,6 +46,7 @@ import {
   type McpRegistrationTarget,
 } from "./mcp-modern-server.js";
 import { ProcessSessionManager } from "./process-sessions.js";
+import { registerRemoteSshTools } from "./remote-ssh.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { conversationScopeIdFromRequestMeta } from "./request-meta.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
@@ -163,7 +164,7 @@ function serverInstructions(
     : "";
 
   const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
-  const common = `Call ${toolNames.openWorkspace} when starting work in a project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that workspace.`;
+  const common = `Call ${toolNames.openWorkspace} when starting work in a local project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that local workspace. When the user requests a remote SSH project and remote_ssh_open is available, call remote_ssh_open instead, then use remote_ssh_read/edit/write/exec/status with its workspace_id. Do not open the local home directory (~) or pass an ssh:// path to open_workspace for a remote project. Never use SSHFS unless the user specifically requests it.`;
 
   return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
 }
@@ -509,12 +510,12 @@ function registerMcpSurface(
     {
       title: "Open workspace",
       description:
-        "Start work in a project directory or isolated worktree when no usable workspace_id exists for it. During continued work, reuse the existing workspace_id instead of calling this tool again. By default this uses the actual checkout; set mode=\"worktree\" for isolated or parallel work.",
+        "Open a LOCAL project directory on the computer running DevSpace. For remote SSH projects use remote_ssh_open instead; do not open the local home directory (~) as a substitute because recursive project instruction discovery can time out. During continued work, reuse the workspace_id. Set mode=\"worktree\" for isolated or parallel Git work.",
       inputSchema: {
         path: z
           .string()
           .describe(
-            "Absolute path, or a leading-tilde home path such as ~/project, to a project directory inside an allowed root.",
+            "Local project directory inside an allowed root, e.g. ~/work/my-project. Remote SSH projects must use remote_ssh_open. Do not use ~ as a fallback.",
           ),
         mode: z
           .enum(["checkout", "worktree"])
@@ -853,6 +854,15 @@ function registerMcpSurface(
     workspaces,
     processSessions,
   });
+
+  // Remote SSH tools use an independent, low-latency workspace and do not
+  // trigger local recursive instruction discovery. They are opt-in via
+  // ~/.devspace/remote-ssh.json and do not alter local Codex tools.
+  // Preserve ChatGPT's Codex-specific tool list and response contract.
+  // Gemini Web uses the general surface and receives these opt-in tools.
+  if (toolSurface === getToolSurface("claude")) {
+    registerRemoteSshTools(internalTarget, config);
+  }
 
   if (codeModeExecutions) {
     registerCodeModeTools(registrationTarget, workspaces, codeModeExecutions);
