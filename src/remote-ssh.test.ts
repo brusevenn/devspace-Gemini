@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { loadConfig } from "./config.js";
+import { ProcessSessionManager } from "./process-sessions.js";
+import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { loadRemoteSshProjects, RemoteSshBridge } from "./remote-ssh.js";
+import { createMcpServer } from "./server.js";
+import { writeTestDevspaceConfig } from "./test-support/config.js";
+import { SqliteWorkspaceStore } from "./workspace-store.js";
+import { WorkspaceRegistry } from "./workspaces.js";
 
 test("remote SSH config accepts only explicit project aliases and paths", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "devspace-ssh-config-"));
@@ -42,6 +51,60 @@ test("an unconfigured DevSpace does not expose remote SSH projects", async (t) =
   const bridge = new RemoteSshBridge(dir);
   assert.equal(bridge.enabled, false);
   await assert.rejects(() => bridge.open("anything"), /not allowed/);
+});
+
+test("Gemini-compatible MCP tools include remote SSH without changing the ChatGPT tool list", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "devspace-ssh-surface-"));
+  const configDir = join(root, ".config");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "remote-ssh.json"), JSON.stringify({
+    projects: [{ name: "example", host: "test-host", root: "/home/test/project" }],
+  }));
+
+  const config = loadConfig(writeTestDevspaceConfig(configDir, {
+    storage: { stateDir: join(root, ".state") },
+    workspaces: { allowedRoots: [root] },
+    subagents: { enabled: false, instructions: "on-demand", providers: [] },
+  }));
+
+  const store = new SqliteWorkspaceStore(config.stateDir);
+  t.after(async () => {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const listFor = async (surface: "claude" | "codex") => {
+    const server = createMcpServer(
+      config, surface, new WorkspaceRegistry(config, store),
+      createReviewCheckpointManager(), new ProcessSessionManager(),
+      () => [], [],
+    );
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-gemini-web-host", version: "1.0" });
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+    try {
+      const result = await client.listTools();
+
+      return result.tools.map((tool) => tool.name);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  };
+
+  const gemini = await listFor("claude");
+  assert.ok(gemini.includes("remote_ssh_open"));
+  assert.ok(gemini.includes("remote_ssh_read"));
+  assert.ok(gemini.includes("remote_ssh_edit"));
+  assert.ok(gemini.includes("remote_ssh_exec"));
+  assert.ok(gemini.includes("bash"));
+
+  const chatgpt = await listFor("codex");
+  assert.ok(chatgpt.includes("apply_patch"));
+  assert.ok(chatgpt.includes("exec_command"));
+  assert.ok(!chatgpt.some((name) => name.startsWith("remote_ssh_")));
 });
 
 test("SSH integration: open and read-only status without any mounts", {
