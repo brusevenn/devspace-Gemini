@@ -46,6 +46,25 @@ test("refresh tokens without a resource are rejected when no alias is configured
   await testRefreshResourcePolicy(await stateDirFixture(t, "refresh-policy"));
 });
 
+test("Gemini CLI loopback OAuth redirect URIs are accepted", async (t) => {
+  const store = new SqliteOAuthStore(await stateDirFixture(t, "gemini-loopback"));
+
+  try {
+    const clients = new SqliteOAuthClientsStore(store, []);
+
+    for (const host of ["localhost", "127.0.0.1"]) {
+      const client = clients.registerClient({
+        redirect_uris: [`http://${host}:49152/oauth/callback`],
+        client_name: "Gemini CLI",
+      });
+
+      assert.equal(client.client_name, "Gemini CLI");
+    }
+  } finally {
+    store.close();
+  }
+});
+
 async function stateDirFixture(t: TestContext, name: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "devspace-oauth-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));

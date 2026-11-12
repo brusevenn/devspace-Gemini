@@ -53,6 +53,13 @@ test("oauth.allowedResourceUrls accepts HTTPS and loopback HTTP URLs only", () =
   }
 });
 
+test("the default OAuth redirect allowlist includes Gemini CLI loopback hosts", () => {
+  const hosts = devspaceConfigSchema.parse({ configVersion: 1 }).oauth.allowedRedirectHosts;
+
+  assert.ok(hosts.includes("localhost"));
+  assert.ok(hosts.includes("127.0.0.1"));
+});
+
 test("the committed JSON schema matches the generated config schema", () => {
   const generatedSchema = `${JSON.stringify(devspaceConfigJsonSchema(), null, 2)}\n`;
 
