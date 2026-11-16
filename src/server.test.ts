@@ -961,6 +961,126 @@ test("HTTP endpoint picks the tool surface from the OAuth client", async (t) => 
   assert.ok(unknown.tools.includes("bash") && !unknown.tools.includes("apply_patch"));
 });
 
+test("Muse OAuth defaults a missing resource only for its exact callback and still requires owner approval", async (t) => {
+  const { localBaseUrl } = await httpServerFixture(
+    t,
+    "devspace-muse-oauth-resource-fallback-test-",
+    false,
+    { oauth: { allowedRedirectHosts: ["agent.meta.ai", "chatgpt.com"] } },
+  );
+
+  const redirectUri = "https://agent.meta.ai/api/hatch/oauth/callback";
+  const verifier = "devspace-muse-oauth-fallback-verifier-0123456789";
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+
+  const registration = await fetch(`${localBaseUrl}/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Muse",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+
+  assert.equal(registration.status, 201, await registration.clone().text());
+
+  // SAFETY: A successful dynamic client registration response contains the generated client_id.
+  const client = await registration.json() as { client_id: string };
+
+  const authorizationParams = {
+    client_id: client.client_id,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    scope: "devspace",
+    state: "muse-resource-fallback",
+  };
+
+  const approvalPage = await fetch(
+    `${localBaseUrl}/authorize?${new URLSearchParams(authorizationParams)}`,
+    { redirect: "manual" },
+  );
+
+  const html = await approvalPage.text();
+  assert.equal(approvalPage.status, 200, html);
+  assert.match(html, /Owner password/);
+  assert.match(html, /https:\/\/example\.test\/mcp/);
+  assert.match(html, /name="resource" value="https:\/\/example\.test\/mcp"/);
+
+  const approval = await fetch(`${localBaseUrl}/authorize`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      ...authorizationParams,
+      owner_token: "test-owner-token-that-is-long-enough",
+    }),
+    redirect: "manual",
+  });
+
+  assert.equal(approval.status, 302, await approval.clone().text());
+  const callback = new URL(approval.headers.get("location") ?? "");
+  const code = callback.searchParams.get("code");
+  assert.ok(code);
+  assert.equal(callback.searchParams.get("state"), "muse-resource-fallback");
+
+  const exchange = await fetch(`${localBaseUrl}/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: client.client_id,
+      code,
+      code_verifier: verifier,
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  assert.equal(exchange.status, 200, await exchange.clone().text());
+
+  // SAFETY: A successful authorization-code exchange returns both bearer and refresh tokens.
+  const tokens = await exchange.json() as { access_token: string; refresh_token: string };
+  assert.ok(tokens.access_token);
+  assert.ok(tokens.refresh_token);
+
+  const mcp = await postModernMcp(localBaseUrl, tokens.access_token, "tools/list", {});
+  assert.equal(mcp.status, 200, await mcp.clone().text());
+
+  const otherRegistration = await fetch(`${localBaseUrl}/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "ChatGPT",
+      redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+
+  assert.equal(otherRegistration.status, 201, await otherRegistration.clone().text());
+
+  // SAFETY: A successful dynamic client registration response contains the generated client_id.
+  const otherClient = await otherRegistration.json() as { client_id: string };
+
+  const rejected = await fetch(
+    `${localBaseUrl}/authorize?${new URLSearchParams({
+      ...authorizationParams,
+      client_id: otherClient.client_id,
+      redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect",
+    })}`,
+    { redirect: "manual" },
+  );
+
+  assert.equal(rejected.status, 302);
+  const rejectedCallback = new URL(rejected.headers.get("location") ?? "");
+  assert.equal(rejectedCallback.searchParams.get("error"), "invalid_request");
+  assert.match(rejectedCallback.searchParams.get("error_description") ?? "", /missing OAuth resource/);
+});
+
 test("HTTP endpoint honours an explicit tools.mode over host detection", async (t) => {
   const { localBaseUrl, issueAccessToken } = await httpServerFixture(
     t,
@@ -1328,7 +1448,10 @@ async function httpServerFixture(
   t: TestContext,
   prefix: string,
   experimentalCodeMode = false,
-  extraConfig: { tools?: { mode: ToolSurfaceName } } = {},
+  extraConfig: {
+    tools?: { mode: ToolSurfaceName };
+    oauth?: { allowedRedirectHosts?: string[] };
+  } = {},
 ): Promise<HttpServerFixture> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const ownerToken = "test-owner-token-that-is-long-enough";

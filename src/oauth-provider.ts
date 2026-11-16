@@ -117,6 +117,23 @@ function requestedScopesAllowed(requested: string[], supported: string[]): boole
   return requested.every((scope) => supported.includes(scope));
 }
 
+function isMuseOAuthClient(client: OAuthClientInformationFull): boolean {
+  return client.redirect_uris.some((redirectUri) => {
+    try {
+      const parsed = new URL(redirectUri);
+
+      return parsed.protocol === "https:"
+        && parsed.hostname === "agent.meta.ai"
+        && parsed.port === ""
+        && parsed.pathname === "/api/hatch/oauth/callback"
+        && parsed.search === ""
+        && parsed.hash === "";
+    } catch {
+      return false;
+    }
+  });
+}
+
 export class SingleUserOAuthProvider implements OAuthServerProvider {
   readonly clientsStore: OAuthRegisteredClientsStore;
   private readonly codes = new Map<string, AuthorizationCodeRecord>();
@@ -142,11 +159,18 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    if (!params.resource || !this.isResourceAllowed(params.resource)) {
+    // Muse currently omits RFC 8707's resource parameter. Scope this
+    // compatibility fallback to its exact, pre-registered HTTPS callback;
+    // every other OAuth client must continue to provide an allowed resource.
+    const authorizationParams = !params.resource && isMuseOAuthClient(client)
+      ? { ...params, resource: this.resourceServerUrl }
+      : params;
+
+    if (!authorizationParams.resource || !this.isResourceAllowed(authorizationParams.resource)) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
 
-    if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
+    if (!requestedScopesAllowed(authorizationParams.scopes ?? [], this.config.scopes)) {
       throw new InvalidRequestError("Requested scope is not supported");
     }
 
@@ -155,9 +179,9 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
       res.send(
         formHtml({
           clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
+          scopes: authorizationParams.scopes ?? this.config.scopes,
+          resource: authorizationParams.resource,
+          fields: authorizationFormFields(client, authorizationParams),
         }),
       );
 
@@ -172,9 +196,9 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
         formHtml({
           error: "The Owner password was not accepted.",
           clientName: client.client_name ?? client.client_id,
-          scopes: params.scopes ?? this.config.scopes,
-          resource: params.resource,
-          fields: authorizationFormFields(client, params),
+          scopes: authorizationParams.scopes ?? this.config.scopes,
+          resource: authorizationParams.resource,
+          fields: authorizationFormFields(client, authorizationParams),
         }),
       );
 
@@ -184,14 +208,17 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     const code = `code-${randomUUID()}`;
     this.codes.set(code, {
       clientId: client.client_id,
-      params,
+      params: authorizationParams,
       expiresAtMs: Date.now() + CODE_TTL_MS,
     });
 
-    const redirectUrl = new URL(params.redirectUri);
+    const redirectUrl = new URL(authorizationParams.redirectUri);
     redirectUrl.searchParams.set("code", code);
 
-    if (params.state !== undefined) redirectUrl.searchParams.set("state", params.state);
+    if (authorizationParams.state !== undefined) {
+      redirectUrl.searchParams.set("state", authorizationParams.state);
+    }
+
     res.redirect(302, redirectUrl.href);
   }
 
