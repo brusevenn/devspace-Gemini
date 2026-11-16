@@ -56,14 +56,22 @@ Do not open my local home directory or use SSHFS.
 - `remote_ssh_write`: creates a new file or replaces an existing file when its SHA-256 matches. Paths are relative to the approved remote root.
 - `remote_ssh_exec`: executes Bash on the remote host in the project directory, with the remote account's permissions. **Shell commands are not confined to that directory**.
 - `remote_ssh_status`: a read-only remote Git status in one SSH connection.
+- `remote_ssh_read_batch`: reads up to 20 files and/or checks Git status in one MCP call and one SSH connection. It is explicitly annotated read-only.
+- `remote_ssh_apply_batch`: applies up to 20 file writes/edits in one MCP call and one SSH connection. It is explicitly annotated as destructive; if an item fails, earlier items may already have completed.
 
 The read/write/edit tools reject path traversal and symlinks that escape the configured project. They refuse direct `.git` file edits and restrict individual files to 1 MiB. An SSH command may access anything the remote Unix user can access, so use a least-privilege account and explicitly confirm destructive operations.
 
 The workspace ID is kept in memory and must be reopened after the DevSpace server restarts. This extension intentionally does not change the persistence model of existing local workspaces.
 
+### Gemini permissions and usage limits
+
+Gemini controls its own confirmation UI and usage quotas; a third-party MCP server cannot disable or raise them. Google's current Gemini Connected Apps guidance says write actions require user confirmation. DevSpace therefore marks read tools as read-only and file mutations/remote shell as state-changing rather than disguising them to suppress prompts. If Gemini offers an **Always allow** choice, that is a Gemini-side grant; DevSpace cannot force Gemini to retain or honor it.
+
+To reduce prompts and tool-call consumption, use `remote_ssh_read_batch` for multiple reads/status checks and `remote_ssh_apply_batch` for multiple file edits/writes. Each batch is one model-facing MCP call and one SSH connection (up to 20 operations). A write batch is still a write action and may require Gemini confirmation. Batching reduces round trips; it does not remove Gemini's compute-based usage limits.
+
 ### Performance and troubleshooting
 
-The remote tools avoid expensive recursive scanning of the local home directory. Native SSH startup still adds network latency. On one Windows-to-Linux test, remote open took 699 ms and Git status 343 ms; results vary by network and machine. Gemini model latency and the HTTPS tunnel are **additional** and are not covered by these measurements.
+The remote tools avoid expensive recursive scanning of the local home directory. Native SSH startup still adds network latency. On one Windows-to-Linux test, remote open took 699 ms and Git status 343 ms; results vary by network and machine. Gemini model latency and the HTTPS tunnel are **additional** and are not covered by these measurements. For large coding tasks, start a fresh Gemini chat when changing projects, avoid repeating large instructions, request only relevant line ranges, and batch related reads and edits.
 
 If you see `MCP request timed out`, first ask which exact tool was called. Never retry `open_workspace("~")` for a remote project; it can recursively scan the full local home directory. Use `remote_ssh_open` instead. If the remote tool is missing, confirm the config file is in the DevSpace owner's home directory, the new Fork is actually running, and DevSpace has been restarted. If SSH fails, run the batch-mode check locally and verify host key trust. The code uses noninteractive SSH and does not ask for a password.
 
@@ -111,9 +119,15 @@ Keep ChatGPT's existing `/mcp` URL, OAuth database, and local workspace roots un
 不要用本地 open_workspace("~")，不要使用 SSHFS。
 ```
 
+多个文件读取或 Git 状态检查优先使用 `remote_ssh_read_batch`；多个文件修改优先使用 `remote_ssh_apply_batch`。每次批量调用最多 20 项，只建立一次 SSH 连接。
+
 ### 工具及安全
 
 `remote_ssh_open` 验证远程项目并建立短期工作区 ID；`remote_ssh_read` 读取 UTF-8 文件并返回 SHA-256；`remote_ssh_edit` 和 `remote_ssh_write` 在更新前验证文件哈希并进行原子替换；`remote_ssh_exec` 远程执行 Bash；`remote_ssh_status` 获取 Git 状态。
+
+`remote_ssh_read_batch` 可在一次 MCP 调用中批量读取文件和获取 Git 状态；`remote_ssh_apply_batch` 可在一次调用中批量写入或编辑文件。后者仍然是写操作，失败时可能已经完成前面的修改，结果会报告部分完成情况。
+
+**Gemini 权限与配额：** Gemini 自己控制授权弹窗和使用配额，第三方 MCP 服务不能关闭或提高这些限制。Google 当前的 Connected Apps 说明要求对写操作进行用户确认。因此 DevSpace 会如实将读取标记为只读，将文件修改和远程 Shell 标记为有状态变更，不能通过伪造只读标记来规避授权。批量工具可以减少 MCP 调用次数和 SSH 往返，但不能取消 Gemini 对写操作的确认，也不能消除 Gemini 的模型计算配额。
 
 文件工具限制在配置的远程项目目录内，拒绝 `..` 路径穿越以及逃出目录的软链接，拒绝直接修改 `.git`。单文件上限为 1 MiB。**但远程命令以 SSH 用户权限运行，不属于目录沙箱**，因此必须严格控制用户权限并确认破坏性命令。
 
@@ -122,6 +136,8 @@ DevSpace 重启后需要再次调用 `remote_ssh_open` 获取工作区 ID。该�
 ### 延迟与故障排查
 
 专用远程工具避免递归扫描本地用户主目录。一次 Windows→Linux 只读实测：打开远程项目 699 ms、远程 Git 状态 343 ms；公网 HTTPS 往返和 Gemini 模型生成时间另计。
+
+处理大型任务时，建议按项目开启新对话，避免反复粘贴大段背景，仅读取相关文件行，并将相关读取或修改合并为批量调用。Gemini 的长对话、复杂任务和模型选择都会影响其使用量。
 
 遇到 `DEADLINE_EXCEEDED` 时先确认具体调用了哪个工具。不要用 `open_workspace("~")` 访问远程项目。若 Gemini 没看到新增工具，请确认实际运行的是本 Fork、配置位于 DevSpace 运行用户的主目录、服务已重启。若 SSH 失败，请先在本机验证 BatchMode、公钥与主机密钥信任。
 

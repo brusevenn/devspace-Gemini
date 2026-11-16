@@ -18,7 +18,9 @@ A fork of [DevSpace](https://github.com/Waishnav/devspace) supporting the **Gemi
 2. Create `~/.devspace/remote-ssh.json` on the computer hosting DevSpace, based on [examples/remote-ssh.example.json](examples/remote-ssh.example.json). Choose an existing SSH alias and an exact project directory. No passwords or private keys belong in this file. Restart DevSpace after changing it.
 3. In [Gemini web](https://gemini.google.com/), open **Settings → Connected Apps → Add custom app / MCP server** (or [Developer Mode](https://gemini.google.com/devmode)), and use your current public `https://YOUR-TUNNEL-HOST/mcp`. Use dynamic OAuth client registration; leave client ID and client secret blank. Authorize through DevSpace's own Owner password screen.
 4. The fork allows Google's OAuth callback domains by default. If your existing config contains a custom `oauth.allowedRedirectHosts`, merge in `oauth-redirect.googleusercontent.com` as well as the sandbox/test counterparts, **keeping** the existing ChatGPT domains.
-5. Ask Gemini to call **remote_ssh_open** with the approved project name. It returns an `rss_...` ID; use **remote_ssh_read**, **remote_ssh_edit**, **remote_ssh_write**, **remote_ssh_exec**, and **remote_ssh_status** with that ID. Never call local `open_workspace("~")` for a remote project. These tools use native SSH with keys and do not mount or copy the repository.
+5. Ask Gemini to call **remote_ssh_open** with the approved project name. It returns an `rss_...` ID; use **remote_ssh_read_batch** for multiple reads/status checks and **remote_ssh_apply_batch** for multiple file writes/edits. Each batch supports up to 20 operations in one MCP call and one SSH connection. Use the individual **remote_ssh_read**, **remote_ssh_edit**, **remote_ssh_write**, **remote_ssh_exec**, and **remote_ssh_status** tools for single operations. Never call local `open_workspace("~")` for a remote project. These tools use native SSH with keys and do not mount or copy the repository.
+
+**Gemini host limits:** Gemini controls confirmation prompts and usage quotas. Google currently requires confirmation for write actions in custom Connected Apps; the MCP server cannot turn that off. The batch tools reduce model-facing tool calls and SSH round trips, but do not remove Gemini's compute-based limits.
 
 An example Gemini Web prompt:
 
@@ -192,7 +194,9 @@ For the full upstream architecture, configuration reference, and security model,
 目前只读，不要修改文件；不要打开本地 ~ 目录，也不要使用 SSHFS。
 ```
 
-**性能说明：** 新版远程工具直接访问明确配置的远程项目，避免把整个 Windows 用户主目录当成工作区进行递归扫描。多个只读步骤可以合并在一次 remote_ssh_exec 中执行，减少 SSH 建连。Gemini 模型生成及公网网络延迟仍需单独测量。
+**性能说明：** 新版远程工具直接访问明确配置的远程项目，避免把整个 Windows 用户主目录当成工作区进行递归扫描。多个文件读取或 Git 状态检查可使用 `remote_ssh_read_batch`，多个文件修改可使用 `remote_ssh_apply_batch`，每次最多 20 项，减少模型工具调用和 SSH 建连。
+
+**Gemini 权限与配额：** Gemini 自己控制授权弹窗和使用配额。Google 当前要求 Gemini 对自定义 Connected Apps 的写操作进行用户确认，DevSpace 无法关闭这一平台级限制。批量工具可以减少调用次数，但不能取消写操作确认，也不能消除 Gemini 的计算配额。
 
 详细操作、安全配置和故障排查参见[原生 Remote SSH 指南](docs/remote-ssh.md)。
 
