@@ -24,9 +24,7 @@ type RemoteInput =
   | { op: "write"; path: string; content: string; expected_sha256?: string }
   | { op: "edit"; path: string; expected_sha256: string; edits: { old_text: string; new_text: string }[] }
   | { op: "exec"; command: string; cwd?: string; timeout?: number }
-  | { op: "status" }
-  | { op: "read_batch"; operations: ({ op: "read"; path: string; offset?: number; limit?: number } | { op: "status" })[] }
-  | { op: "apply_batch"; operations: ({ op: "write"; path: string; content: string; expected_sha256?: string } | { op: "edit"; path: string; expected_sha256: string; edits: { old_text: string; new_text: string }[] })[] };
+  | { op: "status" };
 
 const remoteResponseSchema = z.object({
   ok: z.boolean(),
@@ -89,9 +87,7 @@ export class RemoteSshBridge {
     return {
       workspace_id: id,
       result: output.result + "\nRemote SSH workspace ID: " + id +
-        "\nUse remote_ssh_read_batch for multiple reads/status checks and remote_ssh_apply_batch for multiple file writes/edits. " +
-        "Each batch uses one MCP call and one SSH connection (up to 20 operations). " +
-        "Use remote_ssh_read, remote_ssh_edit, remote_ssh_write, remote_ssh_exec and remote_ssh_status for single operations. " +
+        "\nUse remote_ssh_read, remote_ssh_edit, remote_ssh_write, remote_ssh_exec and remote_ssh_status with this ID. " +
         "Do not use local open_workspace or local read/write/edit/bash for these remote files. No SSHFS.",
     };
   }
@@ -256,47 +252,4 @@ export function registerRemoteSshTools(server: McpRegistrationTarget, config: Se
     outputSchema: resultSchema,
     annotations: { readOnlyHint: true },
   }, async ({ workspace_id }) => reply(await remote.operation(workspace_id, { op: "status" })));
-
-  server.registerTool("remote_ssh_read_batch", {
-    title: "Batch read remote SSH files",
-    description: "Read up to 20 files and/or get Git status in one MCP call and one SSH connection. Read-only: use this instead of multiple remote_ssh_read/status calls. Keep each read to the lines needed.",
-    inputSchema: {
-      workspace_id: z.string(),
-      operations: z.array(z.discriminatedUnion("op", [
-        z.object({
-          op: z.literal("read"),
-          path: pathSchema,
-          offset: z.number().int().min(1).optional(),
-          limit: z.number().int().min(1).max(300).optional(),
-        }),
-        z.object({ op: z.literal("status") }),
-      ])).min(1).max(20),
-    },
-    outputSchema: resultSchema,
-    annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async ({ workspace_id, operations }) => reply(await remote.operation(workspace_id, { op: "read_batch", operations })));
-
-  server.registerTool("remote_ssh_apply_batch", {
-    title: "Batch apply remote SSH file changes",
-    description: "Apply up to 20 remote file writes/edits in one MCP call and one SSH connection. This changes files and Gemini may require explicit confirmation. Read files first and supply their SHA-256 values for edits. If an operation fails, earlier operations in the batch may already have been applied; the result reports completed and failed items.",
-    inputSchema: {
-      workspace_id: z.string(),
-      operations: z.array(z.discriminatedUnion("op", [
-        z.object({
-          op: z.literal("write"),
-          path: pathSchema,
-          content: z.string().max(1024 * 1024),
-          expected_sha256: hashSchema.optional(),
-        }),
-        z.object({
-          op: z.literal("edit"),
-          path: pathSchema,
-          expected_sha256: hashSchema,
-          edits: z.array(z.object({ old_text: z.string().min(1), new_text: z.string() })).min(1).max(20),
-        }),
-      ])).min(1).max(20),
-    },
-    outputSchema: resultSchema,
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-  }, async ({ workspace_id, operations }) => reply(await remote.operation(workspace_id, { op: "apply_batch", operations })));
 }

@@ -3,7 +3,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import * as z from "zod/v4";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig } from "./config.js";
@@ -88,7 +87,7 @@ test("Gemini-compatible MCP tools include remote SSH without changing the ChatGP
     try {
       const result = await client.listTools();
 
-      return result.tools;
+      return result.tools.map((tool) => tool.name);
     } finally {
       await client.close();
       await server.close();
@@ -96,22 +95,16 @@ test("Gemini-compatible MCP tools include remote SSH without changing the ChatGP
   };
 
   const gemini = await listFor("claude");
-  const geminiNames = gemini.map((tool) => tool.name);
-  assert.ok(geminiNames.includes("remote_ssh_open"));
-  assert.ok(geminiNames.includes("remote_ssh_read"));
-  assert.ok(geminiNames.includes("remote_ssh_edit"));
-  assert.ok(geminiNames.includes("remote_ssh_exec"));
-  assert.ok(geminiNames.includes("remote_ssh_read_batch"));
-  assert.ok(geminiNames.includes("remote_ssh_apply_batch"));
-  assert.ok(geminiNames.includes("bash"));
-  assert.equal(gemini.find((tool) => tool.name === "remote_ssh_read_batch")?.annotations?.readOnlyHint, true);
-  assert.equal(gemini.find((tool) => tool.name === "remote_ssh_apply_batch")?.annotations?.destructiveHint, true);
+  assert.ok(gemini.includes("remote_ssh_open"));
+  assert.ok(gemini.includes("remote_ssh_read"));
+  assert.ok(gemini.includes("remote_ssh_edit"));
+  assert.ok(gemini.includes("remote_ssh_exec"));
+  assert.ok(gemini.includes("bash"));
 
   const chatgpt = await listFor("codex");
-  const chatgptNames = chatgpt.map((tool) => tool.name);
-  assert.ok(chatgptNames.includes("apply_patch"));
-  assert.ok(chatgptNames.includes("exec_command"));
-  assert.ok(!chatgptNames.some((name) => name.startsWith("remote_ssh_")));
+  assert.ok(chatgpt.includes("apply_patch"));
+  assert.ok(chatgpt.includes("exec_command"));
+  assert.ok(!chatgpt.some((name) => name.startsWith("remote_ssh_")));
 });
 
 test("SSH integration: open and read-only status without any mounts", {
@@ -142,31 +135,6 @@ test("SSH integration: open and read-only status without any mounts", {
 
   assert.match(read.sha256 ?? "", /^[a-f0-9]{64}$/);
   assert.ok(read.result.length > 0);
-
-  const batch = await bridge.operation(opened.workspace_id, {
-    op: "read_batch",
-    operations: [
-      { op: "read", path: process.env.DEVSPACE_REMOTE_SSH_TEST_FILE ?? "README.md", offset: 1, limit: 5 },
-      { op: "status" },
-    ],
-  });
-
-  const batchResult = z.object({
-    completed: z.number(),
-    partial: z.boolean(),
-    results: z.array(z.object({
-      index: z.number(),
-      ok: z.boolean(),
-      result: z.string().optional(),
-      sha256: z.string().optional(),
-    })),
-  }).parse(JSON.parse(batch.result));
-
-  assert.equal(batchResult.completed, 2);
-  assert.equal(batchResult.partial, false);
-  assert.equal(batchResult.results.length, 2);
-  assert.ok(batchResult.results.every((item) => item.ok));
-  assert.match(batchResult.results[0].sha256 ?? "", /^[a-f0-9]{64}$/);
 
   const command = await bridge.operation(opened.workspace_id, {
     op: "exec",
